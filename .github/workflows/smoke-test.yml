@@ -1,0 +1,163 @@
+name: Smoke tests
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Smoke test: a non-Dependabot PR on a repo that uses dependabot-auto-merge
+  # should complete with conclusion 'success' and the 'dependabot' job skipped.
+  # Before the fix for startup_failure, this would complete with conclusion
+  # 'startup_failure' instead.
+  smoke-test-dependabot-non-dependabot-pr:
+    name: Non-Dependabot PR does not cause startup_failure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate lucos-developer app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.LUCOS_DEVELOPER_APP_ID }}
+          private-key: ${{ secrets.LUCOS_DEVELOPER_PEM }}
+          repositories: .github-test
+
+      - name: Create test branch in .github-test
+        id: create-branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          BRANCH="smoke-test-non-dependabot-${RUN_ID}"
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+
+          # Get the SHA of main
+          MAIN_SHA=$(gh api repos/lucas42/.github-test/git/ref/heads/main --jq '.object.sha')
+
+          # Create the branch
+          gh api repos/lucas42/.github-test/git/refs \
+            --method POST \
+            -f ref="refs/heads/${BRANCH}" \
+            -f sha="${MAIN_SHA}"
+
+          # Add a commit (update README with run ID so branch differs from main)
+          CONTENT=$(gh api repos/lucas42/.github-test/contents/README.md --jq '.content' | base64 -d)
+          NEW_CONTENT=$(printf '%s\n\nSmoke test run %s' "$CONTENT" "$RUN_ID" | base64 -w0)
+          BLOB_SHA=$(gh api repos/lucas42/.github-test/contents/README.md --jq '.sha')
+          gh api repos/lucas42/.github-test/contents/README.md \
+            --method PUT \
+            -f message="Smoke test commit for run ${RUN_ID}" \
+            -f content="${NEW_CONTENT}" \
+            -f sha="${BLOB_SHA}" \
+            -f branch="${BRANCH}"
+
+      - name: Open test PR in .github-test
+        id: create-pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+          BRANCH: ${{ steps.create-branch.outputs.branch }}
+        run: |
+          PR_NUMBER=$(gh api repos/lucas42/.github-test/pulls \
+            --method POST \
+            -f title="Smoke test: non-Dependabot PR (run ${RUN_ID})" \
+            -f head="${BRANCH}" \
+            -f base="main" \
+            -f body="Automated smoke test PR. Will be closed immediately." \
+            --jq '.number')
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Wait for dependabot-auto-merge workflow run to complete
+        id: wait-for-run
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.create-branch.outputs.branch }}
+        run: |
+          echo "Waiting for dependabot-auto-merge workflow run on branch ${BRANCH}..."
+          for i in $(seq 1 24); do
+            sleep 5
+            RUN=$(gh api "repos/lucas42/.github-test/actions/runs?event=pull_request_target&branch=${BRANCH}" \
+              --jq '.workflow_runs[] | select(.name == "Dependabot auto-merge") | {id: .id, status: .status, conclusion: .conclusion}' \
+              2>/dev/null | head -1)
+            if [ -n "$RUN" ]; then
+              STATUS=$(echo "$RUN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['status'])")
+              if [ "$STATUS" = "completed" ]; then
+                CONCLUSION=$(echo "$RUN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['conclusion'])")
+                RUN_ID_FOUND=$(echo "$RUN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['id'])")
+                echo "run_id_found=${RUN_ID_FOUND}" >> $GITHUB_OUTPUT
+                echo "conclusion=${CONCLUSION}" >> $GITHUB_OUTPUT
+                echo "Workflow run completed with conclusion: ${CONCLUSION}"
+                break
+              fi
+              echo "Run found but not yet completed (status: $STATUS), waiting..."
+            else
+              echo "No run found yet (attempt ${i}/24)..."
+            fi
+          done
+          if [ -z "$CONCLUSION" ]; then
+            echo "conclusion=timeout" >> $GITHUB_OUTPUT
+            echo "Timed out waiting for workflow run"
+          fi
+
+      - name: Assert conclusion is success (not startup_failure)
+        env:
+          CONCLUSION: ${{ steps.wait-for-run.outputs.conclusion }}
+        run: |
+          echo "Workflow run conclusion: ${CONCLUSION}"
+          if [ "${CONCLUSION}" = "startup_failure" ]; then
+            echo "FAIL: Got startup_failure — the dependabot-auto-merge workflow is broken for non-Dependabot PRs"
+            exit 1
+          elif [ "${CONCLUSION}" = "timeout" ]; then
+            echo "FAIL: Timed out waiting for workflow run to complete"
+            exit 1
+          elif [ "${CONCLUSION}" = "success" ]; then
+            echo "PASS: Workflow completed successfully"
+          else
+            echo "FAIL: Unexpected conclusion '${CONCLUSION}'"
+            exit 1
+          fi
+
+      - name: Check dependabot job was skipped (not run)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          WORKFLOW_RUN_ID: ${{ steps.wait-for-run.outputs.run_id_found }}
+        run: |
+          JOBS=$(gh api "repos/lucas42/.github-test/actions/runs/${WORKFLOW_RUN_ID}/jobs" \
+            --jq '[.jobs[] | {name: .name, conclusion: .conclusion}]')
+          echo "Jobs in run: ${JOBS}"
+
+          DEPENDABOT_CONCLUSION=$(echo "$JOBS" | python3 -c "
+          import json, sys
+          jobs = json.load(sys.stdin)
+          for job in jobs:
+              if job['name'] == 'dependabot':
+                  print(job['conclusion'])
+                  break
+          else:
+              print('not_found')
+          ")
+          echo "dependabot job conclusion: ${DEPENDABOT_CONCLUSION}"
+
+          if [ "${DEPENDABOT_CONCLUSION}" = "skipped" ]; then
+            echo "PASS: dependabot job was correctly skipped for non-Dependabot actor"
+          elif [ "${DEPENDABOT_CONCLUSION}" = "not_found" ]; then
+            echo "PASS: dependabot job did not run (absent from jobs list is also acceptable)"
+          else
+            echo "FAIL: dependabot job conclusion was '${DEPENDABOT_CONCLUSION}', expected 'skipped'"
+            exit 1
+          fi
+
+      - name: Clean up test PR and branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+          BRANCH: ${{ steps.create-branch.outputs.branch }}
+        run: |
+          if [ -n "${PR_NUMBER}" ]; then
+            gh api repos/lucas42/.github-test/pulls/${PR_NUMBER} \
+              --method PATCH -f state=closed || true
+          fi
+          if [ -n "${BRANCH}" ]; then
+            gh api repos/lucas42/.github-test/git/refs/heads/${BRANCH} \
+              --method DELETE || true
+          fi
