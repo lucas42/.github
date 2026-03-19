@@ -41,7 +41,7 @@ jobs:
 
           # Add a commit (update README with run ID so branch differs from main)
           CONTENT=$(gh api repos/lucas42/.github-test/contents/README.md --jq '.content' | base64 -d)
-          NEW_CONTENT=$(printf "%s\n\nSmoke test run %s" "$CONTENT" "$RUN_ID" | base64 -w0)
+          NEW_CONTENT=$(printf '%s\n\nSmoke test run %s' "$CONTENT" "$RUN_ID" | base64 -w0)
           BLOB_SHA=$(gh api repos/lucas42/.github-test/contents/README.md --jq '.sha')
           gh api repos/lucas42/.github-test/contents/README.md \
             --method PUT \
