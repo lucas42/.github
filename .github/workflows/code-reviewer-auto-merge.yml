@@ -25,7 +25,7 @@ jobs:
         (github.event.review.user.login == 'lucas42' && github.event.review.user.id == 428847)
       )
     steps:
-      - name: Check unsupervisedAgentCode and validate reviewer
+      - name: Check unsupervisedAgentCode and decide whether to merge
         id: check-reviewer
         env:
           REPO_NAME: ${{ github.event.repository.name }}
@@ -43,15 +43,17 @@ jobs:
             EXPECTED_REVIEWER="lucas42"
           fi
 
-          if [ "$REVIEWER_LOGIN" != "$EXPECTED_REVIEWER" ]; then
+          if [ "$REVIEWER_LOGIN" = "$EXPECTED_REVIEWER" ]; then
+            echo "Reviewer '${REVIEWER_LOGIN}' matches expected reviewer for this repo. Proceeding with auto-merge."
+            echo "should_merge=true" >> "$GITHUB_OUTPUT"
+          else
             echo "Reviewer '${REVIEWER_LOGIN}' is not the expected reviewer '${EXPECTED_REVIEWER}' for this repo (unsupervisedAgentCode=${UNSUPERVISED}). Skipping auto-merge."
-            exit 1
+            echo "should_merge=false" >> "$GITHUB_OUTPUT"
           fi
-
-          echo "Reviewer '${REVIEWER_LOGIN}' matches expected reviewer for this repo. Proceeding with auto-merge."
 
       - name: Generate GitHub App token
         id: app-token
+        if: steps.check-reviewer.outputs.should_merge == 'true'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.CODE_REVIEWER_APP_ID }}
@@ -59,6 +61,7 @@ jobs:
       # Use a GitHub App token instead of GITHUB_TOKEN because GITHUB_TOKEN
       # events don't trigger downstream workflows or side-effects.
       - name: Enable auto-merge
+        if: steps.check-reviewer.outputs.should_merge == 'true'
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
