@@ -22,7 +22,7 @@ jobs:
       github.event.review.state == 'approved' &&
       (
         (github.event.review.user.login == 'lucos-code-reviewer[bot]' && github.event.review.user.id == 264151378) ||
-        github.event.review.user.login == 'lucas42'
+        (github.event.review.user.login == 'lucas42' && github.event.review.user.id == 428847)
       )
     steps:
       - name: Check unsupervisedAgentCode and validate reviewer
