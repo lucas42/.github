@@ -14,18 +14,46 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    # Only act on approvals from lucos-code-reviewer[bot].
-    # Both login and numeric user ID are verified to prevent impersonation —
-    # login alone can be spoofed if a GitHub account with the exact same login
-    # exists, but the numeric ID is stable and cannot be reused.
+    # Allow approvals from either lucos-code-reviewer[bot] or lucas42.
+    # The step below validates which is expected for this repo based on
+    # unsupervisedAgentCode from configy.
     if: |
       github.event_name == 'pull_request_review' &&
       github.event.review.state == 'approved' &&
-      github.event.review.user.login == 'lucos-code-reviewer[bot]' &&
-      github.event.review.user.id == 264151378
+      (
+        (github.event.review.user.login == 'lucos-code-reviewer[bot]' && github.event.review.user.id == 264151378) ||
+        (github.event.review.user.login == 'lucas42' && github.event.review.user.id == 428847)
+      )
     steps:
+      - name: Check unsupervisedAgentCode and decide whether to merge
+        id: check-reviewer
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          REVIEWER_LOGIN: ${{ github.event.review.user.login }}
+        run: |
+          # Fetch repo config from configy
+          CONFIGY_RESPONSE=$(curl -sf "https://configy.l42.eu/repositories/${REPO_NAME}" -H "Accept: application/json" || echo '{}')
+          UNSUPERVISED=$(echo "$CONFIGY_RESPONSE" | jq -r '.unsupervisedAgentCode // false')
+
+          echo "unsupervisedAgentCode=${UNSUPERVISED}"
+
+          if [ "$UNSUPERVISED" = "true" ]; then
+            EXPECTED_REVIEWER="lucos-code-reviewer[bot]"
+          else
+            EXPECTED_REVIEWER="lucas42"
+          fi
+
+          if [ "$REVIEWER_LOGIN" = "$EXPECTED_REVIEWER" ]; then
+            echo "Reviewer '${REVIEWER_LOGIN}' matches expected reviewer for this repo. Proceeding with auto-merge."
+            echo "should_merge=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Reviewer '${REVIEWER_LOGIN}' is not the expected reviewer '${EXPECTED_REVIEWER}' for this repo (unsupervisedAgentCode=${UNSUPERVISED}). Skipping auto-merge."
+            echo "should_merge=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate GitHub App token
         id: app-token
+        if: steps.check-reviewer.outputs.should_merge == 'true'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.CODE_REVIEWER_APP_ID }}
@@ -33,6 +61,7 @@ jobs:
       # Use a GitHub App token instead of GITHUB_TOKEN because GITHUB_TOKEN
       # events don't trigger downstream workflows or side-effects.
       - name: Enable auto-merge
+        if: steps.check-reviewer.outputs.should_merge == 'true'
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
