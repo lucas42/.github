@@ -7,9 +7,13 @@ jobs:
   dependabot:
     runs-on: ubuntu-latest
     # Guard is here on the job, NOT in caller workflows.
-    # Caller workflows must not add an if: guard on the job that calls this
-    # reusable workflow — GitHub resolves uses: references before evaluating
-    # if: conditions, which causes startup_failure for non-Dependabot PRs.
+    # Two things caller workflows must NOT do:
+    # 1. Add an if: guard on the job that calls this reusable workflow —
+    #    GitHub resolves uses: references before evaluating if: conditions,
+    #    which causes startup_failure for non-Dependabot PRs.
+    # 2. Use secrets: inherit — on pull_request_target events this also
+    #    causes startup_failure. This workflow only needs GITHUB_TOKEN,
+    #    which is provided automatically and doesn't need inheriting.
     # Keeping the guard here means this job is simply skipped for non-Dependabot
     # PRs and the workflow concludes 'success' cleanly.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
