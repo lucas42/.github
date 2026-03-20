@@ -75,7 +75,7 @@ jobs:
           echo "Waiting for dependabot-auto-merge workflow run on branch ${BRANCH}..."
           for i in $(seq 1 24); do
             sleep 5
-            RUN=$(gh api "repos/lucas42/.github-test/actions/runs?event=pull_request_target&branch=${BRANCH}" \
+            RUN=$(gh api "repos/lucas42/.github-test/actions/runs?event=pull_request&branch=${BRANCH}" \
               --jq '.workflow_runs[] | select(.name == "Dependabot auto-merge") | {id: .id, status: .status, conclusion: .conclusion}' \
               2>/dev/null | head -1)
             if [ -n "$RUN" ]; then
@@ -109,8 +109,8 @@ jobs:
           elif [ "${CONCLUSION}" = "timeout" ]; then
             echo "FAIL: Timed out waiting for workflow run to complete"
             exit 1
-          elif [ "${CONCLUSION}" = "success" ]; then
-            echo "PASS: Workflow completed successfully"
+          elif [ "${CONCLUSION}" = "success" ] || [ "${CONCLUSION}" = "skipped" ]; then
+            echo "PASS: Workflow completed with conclusion '${CONCLUSION}' (non-Dependabot job correctly skipped)"
           else
             echo "FAIL: Unexpected conclusion '${CONCLUSION}'"
             exit 1
@@ -129,7 +129,8 @@ jobs:
           import json, sys
           jobs = json.load(sys.stdin)
           for job in jobs:
-              if job['name'] == 'dependabot':
+              # Reusable workflow jobs appear as 'caller / callee' e.g. 'dependabot / dependabot'
+              if job['name'] == 'dependabot' or job['name'].startswith('dependabot /'):
                   print(job['conclusion'])
                   break
           else:
