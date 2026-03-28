@@ -2,29 +2,32 @@ name: Convention check
 
 on:
   workflow_call:
-    secrets:
-      KEY_LUCOS_REPOS:
-        required: true
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   convention-check:
     runs-on: ubuntu-latest
-    # Dependabot PRs don't have access to repo secrets, and convention
-    # regressions from dependency bumps are extremely unlikely.
-    if: github.actor != 'dependabot[bot]'
     steps:
+      - name: Get OIDC token
+        id: oidc
+        run: |
+          TOKEN=$(curl -sf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=https://repos.l42.eu" | jq -r '.value')
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
       - name: Check conventions for regressions
         env:
-          KEY_LUCOS_REPOS: ${{ secrets.KEY_LUCOS_REPOS }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           REPO_FULL_NAME: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           RESULT=$(curl -sf \
             -X POST \
-            -H "Authorization: Key ${KEY_LUCOS_REPOS}" \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
             "https://repos.l42.eu/api/audit/${REPO_FULL_NAME}?ref=${HEAD_SHA}")
 
           PASS=$(echo "$RESULT" | jq -r '.pass')
