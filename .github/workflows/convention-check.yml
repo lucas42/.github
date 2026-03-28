@@ -3,7 +3,7 @@ name: Convention check
 on:
   workflow_call:
     secrets:
-      LUCOS_REPOS_API_KEY:
+      KEY_LUCOS_REPOS:
         required: true
 
 permissions:
@@ -18,13 +18,13 @@ jobs:
     steps:
       - name: Check conventions for regressions
         env:
-          LUCOS_REPOS_API_KEY: ${{ secrets.LUCOS_REPOS_API_KEY }}
+          KEY_LUCOS_REPOS: ${{ secrets.KEY_LUCOS_REPOS }}
           REPO_FULL_NAME: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           RESULT=$(curl -sf \
             -X POST \
-            -H "Authorization: Bearer ${LUCOS_REPOS_API_KEY}" \
+            -H "Authorization: Key ${KEY_LUCOS_REPOS}" \
             "https://repos.l42.eu/api/audit/${REPO_FULL_NAME}?ref=${HEAD_SHA}")
 
           PASS=$(echo "$RESULT" | jq -r '.pass')
