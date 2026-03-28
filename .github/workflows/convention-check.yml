@@ -1,0 +1,61 @@
+name: Convention check
+
+on:
+  workflow_call:
+    secrets:
+      LUCOS_REPOS_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  convention-check:
+    runs-on: ubuntu-latest
+    # Dependabot PRs don't have access to repo secrets, and convention
+    # regressions from dependency bumps are extremely unlikely.
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - name: Check conventions for regressions
+        env:
+          LUCOS_REPOS_API_KEY: ${{ secrets.LUCOS_REPOS_API_KEY }}
+          REPO_FULL_NAME: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          RESULT=$(curl -sf \
+            -X POST \
+            -H "Authorization: Bearer ${LUCOS_REPOS_API_KEY}" \
+            "https://repos.l42.eu/api/audit/${REPO_FULL_NAME}?ref=${HEAD_SHA}")
+
+          PASS=$(echo "$RESULT" | jq -r '.pass')
+          REGRESSIONS=$(echo "$RESULT" | jq -r '.regressions | length')
+          BASELINE_FAILURES=$(echo "$RESULT" | jq -r '.baseline_failures | length')
+
+          echo "## Convention check results"
+          echo ""
+          echo "Pass: ${PASS}"
+          echo "Regressions: ${REGRESSIONS}"
+          echo "Existing baseline failures: ${BASELINE_FAILURES}"
+          echo ""
+
+          if [ "$PASS" = "true" ]; then
+            echo "✅ No convention regressions detected."
+            if [ "$BASELINE_FAILURES" != "0" ]; then
+              echo ""
+              echo "ℹ️ Existing baseline failures (not blocking):"
+              echo "$RESULT" | jq -r '.baseline_failures[]' | while read -r conv; do
+                echo "  - ${conv}"
+              done
+            fi
+          else
+            echo "❌ Convention regressions detected:"
+            echo ""
+            echo "$RESULT" | jq -r '.regressions[]' | while read -r conv; do
+              DETAIL=$(echo "$RESULT" | jq -r --arg c "$conv" '.details[$c]')
+              echo "  - ${conv} (baseline: $(echo "$DETAIL" | jq -r '.baseline'), current: $(echo "$DETAIL" | jq -r '.current'))"
+            done
+            echo ""
+            echo "These conventions passed on main but would fail after this PR merges."
+            echo "Fix the regressions or verify they are intentional."
+            exit 1
+          fi
