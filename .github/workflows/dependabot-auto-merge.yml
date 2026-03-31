@@ -2,6 +2,14 @@ name: Dependabot auto-merge
 
 on:
   workflow_call:
+    secrets:
+      CODE_REVIEWER_APP_ID:
+        required: false
+      CODE_REVIEWER_PRIVATE_KEY:
+        required: false
+
+permissions:
+  contents: read
 
 jobs:
   dependabot:
@@ -20,8 +28,18 @@ jobs:
       pull-requests: write
       contents: write
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        if: secrets.CODE_REVIEWER_APP_ID != '' && secrets.CODE_REVIEWER_PRIVATE_KEY != ''
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        with:
+          app-id: ${{ secrets.CODE_REVIEWER_APP_ID }}
+          private-key: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+      # Use a GitHub App token when available so the merge commit triggers
+      # downstream workflows (including CodeQL). Fall back to GITHUB_TOKEN
+      # for callers that haven't passed app secrets yet.
       - name: Enable auto-merge for Dependabot PRs
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
