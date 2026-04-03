@@ -1,0 +1,53 @@
+name: Tag release
+
+# Trigger whenever the smoke test suite completes on main.
+# We only tag if the smoke tests passed — this is the gate from issue #38.
+#
+# Known limitation: the smoke test suite currently only covers
+# reusable-dependabot-auto-merge. Changes to reusable-code-reviewer-auto-merge
+# or reusable-convention-check are tagged without end-to-end smoke coverage.
+# This is a known gap, tracked in #38, and is considered acceptable — partial
+# gating is better than no gating.
+on:
+  workflow_run:
+    workflows: ["Smoke tests"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Tag new minor release
+    # Only tag when smoke tests passed.
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute next version and create tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # Find the highest existing semver tag.
+          # The tags API returns tags newest-first; filtering to semver tags and
+          # taking the first gives the most recently created release.
+          LATEST=$(gh api repos/lucas42/.github/tags \
+            --jq '[.[] | select(.name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | .[0].name' \
+            2>/dev/null || echo "")
+
+          if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
+            NEW_TAG="v1.0.0"
+          else
+            MAJOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | sed 's/^v//' | cut -d. -f2)
+            NEW_MINOR=$((MINOR + 1))
+            NEW_TAG="v${MAJOR}.${NEW_MINOR}.0"
+          fi
+
+          echo "Creating tag ${NEW_TAG} at ${COMMIT_SHA}"
+          gh api repos/lucas42/.github/git/refs \
+            --method POST \
+            -f ref="refs/tags/${NEW_TAG}" \
+            -f sha="${COMMIT_SHA}"
+          echo "Successfully tagged ${COMMIT_SHA} as ${NEW_TAG}"
