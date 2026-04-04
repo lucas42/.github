@@ -3,6 +3,8 @@ name: Smoke tests
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   # Smoke test: a non-Dependabot PR on a repo that uses dependabot-auto-merge
