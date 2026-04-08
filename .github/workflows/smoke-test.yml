@@ -14,6 +14,7 @@ jobs:
   smoke-test-dependabot-non-dependabot-pr:
     name: Non-Dependabot PR does not cause startup_failure
     runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
     steps:
       - name: Generate lucos-developer app token
         id: app-token
