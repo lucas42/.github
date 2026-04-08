@@ -97,13 +97,14 @@ jobs:
               pullRequest(number: ${{ github.event.pull_request.number }}) {
                 closingIssuesReferences(first: 10) {
                   nodes {
+                    __typename
                     number
                     state
                   }
                 }
               }
             }
-          }' --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[] | select(.state == "OPEN") | .number' | while read -r issue_number; do
+          }' --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[] | select(.state == "OPEN" and .__typename == "Issue") | .number' | while read -r issue_number; do
             echo "Closing issue #$issue_number"
             gh api "repos/${{ github.repository }}/issues/$issue_number" \
               --method PATCH \
