@@ -24,7 +24,7 @@ jobs:
 
       - name: Mirror images
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           # All Docker Hub base images used across the lucos estate.
           # Update this list when a Dockerfile adds a new base image.
@@ -94,8 +94,18 @@ jobs:
             "tonistiigi/binfmt:latest"
           )
 
+          failed=()
           for image in "${images[@]}"; do
             dst="ghcr.io/lucas42/mirror/${image}"
             echo "Mirroring ${image} → ${dst}"
-            crane copy "${image}" "${dst}"
+            if ! crane copy "${image}" "${dst}"; then
+              echo "WARNING: Failed to mirror ${image}"
+              failed+=("${image}")
+            fi
           done
+
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "ERROR: Failed to mirror ${#failed[@]} image(s):"
+            printf '  - %s\n' "${failed[@]}"
+            exit 1
+          fi
