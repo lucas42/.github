@@ -98,9 +98,15 @@ jobs:
           for image in "${images[@]}"; do
             dst="ghcr.io/lucas42/mirror/${image}"
             echo "Mirroring ${image} → ${dst}"
-            if ! crane copy --platform=linux/amd64,linux/arm64 "${image}" "${dst}"; then
-              echo "WARNING: Failed to mirror ${image}"
-              failed+=("${image}")
+            if crane copy "${image}" "${dst}"; then
+              : # success
+            else
+              echo "  First attempt failed — retrying in 10s (partially-uploaded blobs reduce concurrent sessions on retry)"
+              sleep 10
+              if ! crane copy "${image}" "${dst}"; then
+                echo "WARNING: Failed to mirror ${image}"
+                failed+=("${image}")
+              fi
             fi
           done
 
