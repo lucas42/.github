@@ -98,7 +98,7 @@ jobs:
           for image in "${images[@]}"; do
             dst="ghcr.io/lucas42/mirror/${image}"
             echo "Mirroring ${image} → ${dst}"
-            if ! crane copy "${image}" "${dst}"; then
+            if ! crane copy --platform=linux/amd64,linux/arm64 "${image}" "${dst}"; then
               echo "WARNING: Failed to mirror ${image}"
               failed+=("${image}")
             fi
