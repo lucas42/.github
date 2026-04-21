@@ -3,9 +3,9 @@ name: Dependabot auto-merge
 on:
   workflow_call:
     secrets:
-      CODE_REVIEWER_APP_ID:
+      LUCOS_CI_APP_ID:
         required: false
-      CODE_REVIEWER_PRIVATE_KEY:
+      LUCOS_CI_PRIVATE_KEY:
         required: false
 
 permissions:
@@ -35,8 +35,8 @@ jobs:
       - name: Check if App token secrets are available
         id: check-secrets
         env:
-          APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
-          APP_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+          APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}
+          APP_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
         run: |
           if [ -n "$APP_ID" ] && [ -n "$APP_KEY" ]; then
             echo "has_app_token=true" >> "$GITHUB_OUTPUT"
@@ -48,8 +48,8 @@ jobs:
         if: steps.check-secrets.outputs.has_app_token == 'true'
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.CODE_REVIEWER_APP_ID }}
-          private-key: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+          app-id: ${{ secrets.LUCOS_CI_APP_ID }}
+          private-key: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
       # Use a GitHub App token when available so the merge commit triggers
       # downstream workflows (including CodeQL). Fall back to GITHUB_TOKEN
       # for callers that haven't passed app secrets yet.

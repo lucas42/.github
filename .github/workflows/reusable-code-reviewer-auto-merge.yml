@@ -3,9 +3,9 @@ name: Auto-merge on code reviewer approval
 on:
   workflow_call:
     secrets:
-      CODE_REVIEWER_APP_ID:
+      LUCOS_CI_APP_ID:
         required: true
-      CODE_REVIEWER_PRIVATE_KEY:
+      LUCOS_CI_PRIVATE_KEY:
         required: true
 
 permissions:
@@ -56,8 +56,8 @@ jobs:
         if: steps.check-reviewer.outputs.should_merge == 'true'
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.CODE_REVIEWER_APP_ID }}
-          private-key: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+          app-id: ${{ secrets.LUCOS_CI_APP_ID }}
+          private-key: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
       # Use a GitHub App token instead of GITHUB_TOKEN because GITHUB_TOKEN
       # events don't trigger downstream workflows or side-effects.
       - name: Enable auto-merge
@@ -83,8 +83,8 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.CODE_REVIEWER_APP_ID }}
-          private-key: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+          app-id: ${{ secrets.LUCOS_CI_APP_ID }}
+          private-key: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
       # GitHub doesn't process closing keywords (e.g. "Closes #N") when a bot
       # merges a PR. Work around this by querying the closing references that
       # GitHub has already parsed and closing each issue via the API.
