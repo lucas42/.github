@@ -28,7 +28,7 @@ This repo uses semantic versioning tags (e.g. `v1.0.0`, `v1.1.0`). A new tag is 
 
 The `release.yml` workflow only tags a commit if the smoke test suite passes. This ensures callers are never automatically updated to a broken version.
 
-**Known limitation**: the smoke test suite currently only covers `reusable-dependabot-auto-merge`. Changes to `reusable-code-reviewer-auto-merge` or `reusable-convention-check` are tagged without end-to-end smoke coverage.
+The smoke test suite covers both `reusable-dependabot-auto-merge` and `reusable-code-reviewer-auto-merge`. Changes to `reusable-convention-check` are tagged without end-to-end smoke coverage.
 
 ### Pinning callers
 
@@ -59,8 +59,8 @@ jobs:
   auto-merge:
     uses: lucas42/.github/.github/workflows/reusable-code-reviewer-auto-merge.yml@v1.0.0
     secrets:
-      CODE_REVIEWER_APP_ID: ${{ secrets.CODE_REVIEWER_APP_ID }}
-      CODE_REVIEWER_PRIVATE_KEY: ${{ secrets.CODE_REVIEWER_PRIVATE_KEY }}
+      LUCOS_CI_APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}
+      LUCOS_CI_PRIVATE_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
 ```
 
 See each workflow file for full documentation.
