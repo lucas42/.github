@@ -1,12 +1,16 @@
 name: Dependabot auto-merge
 
+# This workflow will not merge without a GitHub App token.
+# A GITHUB_TOKEN-attributed merge would suppress downstream push-triggered
+# workflows including CodeQL, leaving main without analysis coverage.
+
 on:
   workflow_call:
     secrets:
       LUCOS_CI_APP_ID:
-        required: false
+        required: true
       LUCOS_CI_PRIVATE_KEY:
-        required: false
+        required: true
 
 permissions:
   contents: read
@@ -28,33 +32,14 @@ jobs:
       pull-requests: write
       contents: write
     steps:
-      # The secrets context is not available in reusable workflow if:
-      # conditions — GitHub parses them at call time before secrets are
-      # resolved, producing "Unrecognized named-value: 'secrets'".
-      # Work around this by checking via env vars in a shell step.
-      - name: Check if App token secrets are available
-        id: check-secrets
-        env:
-          APP_ID: ${{ secrets.LUCOS_CI_APP_ID }}
-          APP_KEY: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
-        run: |
-          if [ -n "$APP_ID" ] && [ -n "$APP_KEY" ]; then
-            echo "has_app_token=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_app_token=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Generate GitHub App token
         id: app-token
-        if: steps.check-secrets.outputs.has_app_token == 'true'
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
           app-id: ${{ secrets.LUCOS_CI_APP_ID }}
           private-key: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
-      # Use a GitHub App token when available so the merge commit triggers
-      # downstream workflows (including CodeQL). Fall back to GITHUB_TOKEN
-      # for callers that haven't passed app secrets yet.
       - name: Enable auto-merge for Dependabot PRs
         run: gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
