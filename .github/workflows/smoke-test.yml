@@ -166,6 +166,33 @@ jobs:
               --method DELETE || true
           fi
 
+  # Structural check: the reusable dependabot workflow must not fall back to
+  # GITHUB_TOKEN and must declare both App secrets as required. A GITHUB_TOKEN
+  # fallback silently suppresses CodeQL on main (issue #60).
+  smoke-test-dependabot-no-github-token-fallback:
+    name: Reusable dependabot workflow has no GITHUB_TOKEN fallback
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify no GITHUB_TOKEN fallback and secrets are required
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          CONTENT=$(gh api "repos/lucas42/.github/contents/.github/workflows/reusable-dependabot-auto-merge.yml?ref=${SHA}" --jq '.content' | base64 -d)
+
+          if echo "$CONTENT" | grep -q "secrets.GITHUB_TOKEN"; then
+            echo "FAIL: reusable workflow contains a GITHUB_TOKEN fallback — merges may suppress CodeQL"
+            exit 1
+          fi
+          echo "PASS: No GITHUB_TOKEN fallback found"
+
+          if echo "$CONTENT" | grep -q "required: true"; then
+            echo "PASS: App token secrets are declared required"
+          else
+            echo "FAIL: App token secrets are not declared required — callers that omit them would silently fall back"
+            exit 1
+          fi
+
   # Smoke test: a PR on a repo that uses code-reviewer-auto-merge, approved by
   # lucos-code-reviewer[bot], should trigger auto-merge (workflow conclusion: success,
   # auto-merge job not skipped). This validates end-to-end that the reusable workflow
