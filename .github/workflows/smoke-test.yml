@@ -193,6 +193,125 @@ jobs:
             exit 1
           fi
 
+  # Behavioural check: a non-Dependabot PR on a repo whose caller omits the required
+  # secrets must produce startup_failure — not a silent success with a skipped job.
+  # This is the runtime companion to the structural check above (issue #60).
+  # Requires dependabot-auto-merge-no-secrets.yml to be present in .github-test.
+  smoke-test-dependabot-startup-failure-no-secrets:
+    name: Missing required secrets cause startup_failure
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - name: Generate lucos-developer app token
+        id: app-token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          app-id: ${{ secrets.LUCOS_DEVELOPER_APP_ID }}
+          private-key: ${{ secrets.LUCOS_DEVELOPER_PEM }}
+          repositories: .github-test
+
+      - name: Create test branch in .github-test
+        id: create-branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          BRANCH="smoke-test-no-secrets-${RUN_ID}"
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+
+          MAIN_SHA=$(gh api repos/lucas42/.github-test/git/ref/heads/main --jq '.object.sha')
+          gh api repos/lucas42/.github-test/git/refs \
+            --method POST \
+            -f ref="refs/heads/${BRANCH}" \
+            -f sha="${MAIN_SHA}"
+
+          CONTENT=$(gh api repos/lucas42/.github-test/contents/README.md --jq '.content' | base64 -d)
+          NEW_CONTENT=$(printf '%s\n\nSmoke test no-secrets run %s' "$CONTENT" "$RUN_ID" | base64 -w0)
+          BLOB_SHA=$(gh api repos/lucas42/.github-test/contents/README.md --jq '.sha')
+          gh api repos/lucas42/.github-test/contents/README.md \
+            --method PUT \
+            -f message="Smoke test no-secrets commit for run ${RUN_ID}" \
+            -f content="${NEW_CONTENT}" \
+            -f sha="${BLOB_SHA}" \
+            -f branch="${BRANCH}"
+
+      - name: Open test PR in .github-test
+        id: create-pr
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RUN_ID: ${{ github.run_id }}
+          BRANCH: ${{ steps.create-branch.outputs.branch }}
+        run: |
+          PR_NUMBER=$(gh api repos/lucas42/.github-test/pulls \
+            --method POST \
+            -f title="Smoke test: no-secrets startup_failure (run ${RUN_ID})" \
+            -f head="${BRANCH}" \
+            -f base="main" \
+            -f body="Automated smoke test PR. Will be closed immediately." \
+            --jq '.number')
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Wait for no-secrets workflow run to complete
+        id: wait-for-run
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.create-branch.outputs.branch }}
+        run: |
+          echo "Waiting for no-secrets Dependabot auto-merge run on branch ${BRANCH}..."
+          for i in $(seq 1 24); do
+            sleep 5
+            RUN=$(gh api "repos/lucas42/.github-test/actions/runs?event=pull_request&branch=${BRANCH}" \
+              --jq '.workflow_runs[] | select(.name == "Dependabot auto-merge (no secrets — startup_failure smoke test)") | {id: .id, status: .status, conclusion: .conclusion}' \
+              2>/dev/null | head -1)
+            if [ -n "$RUN" ]; then
+              STATUS=$(echo "$RUN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['status'])")
+              if [ "$STATUS" = "completed" ]; then
+                CONCLUSION=$(echo "$RUN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['conclusion'])")
+                echo "conclusion=${CONCLUSION}" >> $GITHUB_OUTPUT
+                echo "Workflow run completed with conclusion: ${CONCLUSION}"
+                break
+              fi
+              echo "Run found but not yet completed (status: $STATUS), waiting..."
+            else
+              echo "No run found yet (attempt ${i}/24)..."
+            fi
+          done
+          if [ -z "$CONCLUSION" ]; then
+            echo "conclusion=timeout" >> $GITHUB_OUTPUT
+            echo "Timed out waiting for workflow run"
+          fi
+
+      - name: Assert conclusion is startup_failure
+        env:
+          CONCLUSION: ${{ steps.wait-for-run.outputs.conclusion }}
+        run: |
+          echo "Workflow run conclusion: ${CONCLUSION}"
+          if [ "${CONCLUSION}" = "startup_failure" ]; then
+            echo "PASS: Missing required secrets correctly produced startup_failure"
+          elif [ "${CONCLUSION}" = "timeout" ]; then
+            echo "FAIL: Timed out waiting for workflow run"
+            exit 1
+          else
+            echo "FAIL: Expected startup_failure but got '${CONCLUSION}' — the required-secrets guard may not be working"
+            exit 1
+          fi
+
+      - name: Clean up test PR and branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ steps.create-pr.outputs.pr_number }}
+          BRANCH: ${{ steps.create-branch.outputs.branch }}
+        run: |
+          if [ -n "${PR_NUMBER}" ]; then
+            gh api repos/lucas42/.github-test/pulls/${PR_NUMBER} \
+              --method PATCH -f state=closed || true
+          fi
+          if [ -n "${BRANCH}" ]; then
+            gh api repos/lucas42/.github-test/git/refs/heads/${BRANCH} \
+              --method DELETE || true
+          fi
+
   # Smoke test: a PR on a repo that uses code-reviewer-auto-merge, approved by
   # lucos-code-reviewer[bot], should trigger auto-merge (workflow conclusion: success,
   # auto-merge job not skipped). This validates end-to-end that the reusable workflow
