@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   # Smoke test: a non-Dependabot PR on a repo that uses dependabot-auto-merge
   # should complete with conclusion 'success' and the 'dependabot' job skipped.
