@@ -31,9 +31,46 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
           REVIEWER_LOGIN: ${{ github.event.review.user.login }}
         run: |
-          # Fetch repo config from configy
-          CONFIGY_RESPONSE=$(curl -sf "https://configy.l42.eu/repositories/${REPO_NAME}" -H "Accept: application/json" || echo '{}')
-          UNSUPERVISED=$(echo "$CONFIGY_RESPONSE" | jq -r '.unsupervisedAgentCode // false')
+          # Fetch repo config from configy, retrying to ride out transient failures.
+          # Three distinct states must be distinguished:
+          #   1. configy says unsupervisedAgentCode=true  → bot approval is correct → merge
+          #   2. configy says unsupervisedAgentCode=false → human review expected   → skip (correct silence)
+          #   3. lookup failed (network error / non-200 / field absent)             → fail loudly (NOT silent skip)
+          # States 2 and 3 must NOT collapse to the same output — a silent skip
+          # for state 3 is indistinguishable from state 2 and strands PRs without
+          # any signal of failure.
+          LOOKUP_SUCCESS=false
+          UNSUPERVISED=""
+
+          for attempt in 1 2 3; do
+            HTTP_CODE=$(curl -s --max-time 30 \
+              -o /tmp/configy_response.json \
+              -w "%{http_code}" \
+              "https://configy.l42.eu/repositories/${REPO_NAME}" \
+              -H "Accept: application/json" 2>/dev/null)
+            CURL_EXIT=$?
+
+            if [ "$CURL_EXIT" -eq 0 ] && [ "$HTTP_CODE" = "200" ]; then
+              CONFIGY_RESPONSE=$(cat /tmp/configy_response.json)
+              if echo "$CONFIGY_RESPONSE" | jq -e 'has("unsupervisedAgentCode")' > /dev/null 2>&1; then
+                UNSUPERVISED=$(echo "$CONFIGY_RESPONSE" | jq -r '.unsupervisedAgentCode')
+                LOOKUP_SUCCESS=true
+                break
+              fi
+              echo "Attempt ${attempt}/3: configy returned HTTP 200 but 'unsupervisedAgentCode' field absent in response"
+            else
+              echo "Attempt ${attempt}/3: configy lookup failed (curl_exit=${CURL_EXIT}, http_code=${HTTP_CODE})"
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+
+          if [ "$LOOKUP_SUCCESS" != "true" ]; then
+            echo "::error::Could not determine supervision status for ${REPO_NAME} after 3 attempts. Re-run this workflow once configy is reachable."
+            exit 1
+          fi
 
           echo "unsupervisedAgentCode=${UNSUPERVISED}"
 
