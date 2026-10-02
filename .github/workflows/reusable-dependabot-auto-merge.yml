@@ -3,6 +3,9 @@ name: Dependabot auto-merge
 # This workflow will not merge without a GitHub App token.
 # A GITHUB_TOKEN-attributed merge would suppress downstream push-triggered
 # workflows including CodeQL, leaving main without analysis coverage.
+#
+# The provenance job below only reads and disarms (it pushes nothing), so it uses
+# the ordinary GITHUB_TOKEN to skip the App-token round trip: it races a merge.
 
 on:
   workflow_call:
@@ -15,8 +18,67 @@ on:
 permissions:
   contents: read
 
+# One run per PR at a time, newest wins: a run that passed the provenance check
+# can't arm auto-merge after a later run has disarmed it for a foreign commit.
+concurrency:
+  group: dependabot-auto-merge-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
+  # Auto-merge is armed when a Dependabot PR opens and stays armed, so a commit
+  # from anyone else pushed onto the branch would merge without review. On every
+  # run, disarm unless ALL commits are Dependabot's; fail closed on any doubt.
+  # This stops accidental bypass, not a committer who spoofs Dependabot's author email.
+  # Callers must keep the synchronize trigger: it is how this job gets to disarm.
+  provenance:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      pull-requests: write
+      contents: write
+    outputs:
+      armable: ${{ steps.check.outputs.armable }}
+    steps:
+      - name: Disarm auto-merge unless every commit is Dependabot's
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          START=$(date +%s)
+          echo "armable=false" >> "$GITHUB_OUTPUT"
+
+          REASON=""
+          if ! AUTHORS=$(gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/commits?per_page=100" --jq '.[] | (.author.login // "unlinked-author")'); then
+            REASON="could not list the PR's commits"
+          elif ! EXPECTED=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.commits'); then
+            REASON="could not read the PR's commit count"
+          elif [ -z "$AUTHORS" ]; then
+            REASON="commit list is empty"
+          elif [ "$(printf '%s\n' "$AUTHORS" | wc -l)" != "$EXPECTED" ]; then
+            REASON="listed commits do not match the PR's commit count of ${EXPECTED}"
+          elif FOREIGN=$(printf '%s\n' "$AUTHORS" | grep -vxF 'dependabot[bot]'); then
+            REASON="commits not authored by dependabot[bot]: $(printf '%s' "$FOREIGN" | sort | uniq -c | tr '\n' ' ')"
+          fi
+
+          if [ -z "$REASON" ]; then
+            echo "armable=true" >> "$GITHUB_OUTPUT"
+            echo "All commits are authored by dependabot[bot]; auto-merge may be armed."
+            exit 0
+          fi
+
+          echo "::warning::Disarming auto-merge on ${PR_URL}: ${REASON}"
+          gh pr merge --disable-auto "$PR_URL" || true
+          if [ -n "$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest // empty')" ]; then
+            echo "::error::Auto-merge is still armed on ${PR_URL} after the disarm attempt"
+            exit 1
+          fi
+          echo "Auto-merge is not armed. Disarm completed $(( $(date +%s) - START ))s after the job started."
+
   dependabot:
+    needs: provenance
     runs-on: ubuntu-latest
     # Guard is here on the job, NOT in caller workflows.
     # Caller workflows must use the pull_request trigger (not pull_request_target)
@@ -27,7 +89,7 @@ jobs:
     # 2. secrets: inherit also causes startup_failure on pull_request_target events.
     # Keeping the guard here means this job is simply skipped for non-Dependabot
     # PRs and the workflow concludes 'skipped' cleanly.
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && needs.provenance.outputs.armable == 'true'
     permissions:
       pull-requests: write
       contents: write
@@ -39,7 +101,16 @@ jobs:
           app-id: ${{ secrets.LUCOS_CI_APP_ID }}
           private-key: ${{ secrets.LUCOS_CI_PRIVATE_KEY }}
       - name: Enable auto-merge for Dependabot PRs
-        run: gh pr merge --auto --merge "$PR_URL"
+        id: arm
+        run: |
+          # Skip if the branch moved since the provenance check; the push's own run decides.
+          CURRENT=$(gh pr view "$PR_URL" --json headRefOid --jq '.headRefOid')
+          if [ "$CURRENT" != "$EVENT_HEAD_SHA" ]; then
+            echo "::warning::Not arming ${PR_URL}: head moved from ${EVENT_HEAD_SHA} to ${CURRENT} since the provenance check"
+            exit 0
+          fi
+          gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
