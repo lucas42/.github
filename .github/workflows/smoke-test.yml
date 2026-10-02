@@ -196,6 +196,16 @@ jobs:
             exit 1
           fi
 
+  # Logic check: runs the real provenance step script from the reusable dependabot
+  # workflow against a fake gh (scripts/test-provenance-guard.sh). Covers a foreign
+  # commit, unlinked author, empty/truncated/errored commit list, and failed disarm.
+  smoke-test-dependabot-provenance-guard:
+    name: Provenance guard disarms unless every commit is Dependabot's
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/test-provenance-guard.sh
+
   # Behavioural check: a non-Dependabot PR on a repo whose caller omits the required
   # secrets must produce startup_failure — not a silent success with a skipped job.
   # This is the runtime companion to the structural check above (issue #60).

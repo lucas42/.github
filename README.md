@@ -13,7 +13,7 @@ Workflow files are named with a prefix indicating their type:
 
 | Workflow | Purpose |
 |---|---|
-| `.github/workflows/reusable-dependabot-auto-merge.yml` | Auto-merges Dependabot pull requests using `GITHUB_TOKEN` |
+| `.github/workflows/reusable-dependabot-auto-merge.yml` | Auto-merges Dependabot pull requests, and disarms auto-merge if any commit on the PR is not authored by `dependabot[bot]` |
 | `.github/workflows/reusable-code-reviewer-auto-merge.yml` | Auto-merges pull requests approved by `lucos-code-reviewer[bot]` |
 | `.github/workflows/reusable-convention-check.yml` | Checks that a repo follows the standard lucos conventions |
 
